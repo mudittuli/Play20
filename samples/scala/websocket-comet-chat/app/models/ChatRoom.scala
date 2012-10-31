@@ -7,7 +7,6 @@ import play.api._
 import play.api.libs.json._
 import play.api.libs.iteratee._
 import play.api.libs.concurrent._
-import play.api.libs.iteratee.Concurrent._
 
 import akka.util.Timeout
 import akka.pattern.ask
@@ -99,29 +98,24 @@ object ChatRoom {
 
 class ChatRoom extends Actor {
   
-  var members = Map.empty[String, Channel[JsValue]]
+  var members = Map.empty[String, PushEnumerator[JsValue]]
   
   def receive = {
     
     case Join(username) => {
       // Create an Enumerator to write to this socket
-      val enumerator =  Concurrent.unicast[JsValue]( channel => self ! NotifyJoin(username, channel),
-                                                  onComplete = () => println("THis is complete"))
-
+      val channel =  Enumerator.imperative[JsValue]( onStart = () => self ! NotifyJoin(username),
+                                                      onComplete = () => self ! Quit(username))
       if(members.contains(username)) {
         sender ! CannotConnect("This username is already used")
       } else {
+        members = members + (username -> channel)
         
-        sender ! Connected(enumerator)
+        sender ! Connected(channel)
       }
-      
     }
 
-    case NotifyJoin(username, channel) => {
-      if(!members.contains(username)) {
-        members = members + (username -> channel)
-      }
-
+    case NotifyJoin(username) => {
       notifyAll("join", username, "has entered the room")
     }
     
@@ -147,7 +141,6 @@ class ChatRoom extends Actor {
         )
       )
     )
-    // println("SOmeboy did something")
     members.foreach { 
       case (_, channel) => channel.push(msg)
     }
@@ -158,7 +151,7 @@ class ChatRoom extends Actor {
 case class Join(username: String)
 case class Quit(username: String)
 case class Talk(username: String, text: String)
-case class NotifyJoin(username: String, channel:Channel[JsValue])
+case class NotifyJoin(username: String)
 
 case class Connected(enumerator:Enumerator[JsValue])
 case class CannotConnect(msg: String)
